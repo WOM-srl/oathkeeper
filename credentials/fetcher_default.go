@@ -39,6 +39,12 @@ import (
 
 	"github.com/ory/herodot"
 	"github.com/ory/x/httpx"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 type reasoner interface {
@@ -242,6 +248,59 @@ func (s *FetcherDefault) resolve(wg *sync.WaitGroup, errs chan error, location u
 		}
 
 		reader = res.Body
+	case "s3":
+		sessionConfig := aws.Config{}
+
+		keyId := location.User.Username()
+		secret, _ := location.User.Password()
+		if keyId != "" && secret != "" {
+			sessionConfig.Credentials = credentials.NewStaticCredentials(keyId, secret, "")
+		}
+
+		if region := location.Query().Get("region"); region != "" {
+			sessionConfig.Region = &region
+		}
+
+		if endpoint := location.Query().Get("endpoint"); endpoint != "" {
+			sessionConfig.Endpoint = &endpoint
+		}
+
+		svc := s3.New(session.Must(session.NewSession(&sessionConfig)))
+
+		bucket := location.Host
+		key := location.Path
+		result, err := svc.GetObject(&s3.GetObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		})
+
+		if err != nil {
+			if awsErr, ok := err.(awserr.Error); ok {
+				errs <- errors.WithStack(herodot.
+					ErrInternalServerError.
+					WithReasonf(
+						`Expected successful status code from location "%s", but received code "%s" (%s).`,
+						location.String(),
+						awsErr.Code(),
+						awsErr.Message(),
+					),
+				)
+			} else {
+				errs <- errors.WithStack(herodot.
+					ErrInternalServerError.
+					WithReasonf(
+						`Unable to fetch JSON Web Keys from location "%s" because "%s".`,
+						location.String(),
+						err.Error(),
+					),
+				)
+			}
+
+			return
+		}
+
+		defer result.Body.Close()
+		reader = result.Body
 	default:
 		errs <- errors.WithStack(herodot.
 			ErrInternalServerError.
