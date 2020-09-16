@@ -347,6 +347,7 @@ func (r *RegistryMemory) prepareAuthn() {
 			authn.NewAuthenticatorNoOp(r.c),
 			authn.NewAuthenticatorOAuth2ClientCredentials(r.c),
 			authn.NewAuthenticatorOAuth2Introspection(r.c),
+			authn.NewAuthenticatorAccessToken(r.c),
 			authn.NewAuthenticatorUnauthorized(r.c),
 		}
 
